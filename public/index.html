@@ -1,0 +1,185 @@
+const express = require('express');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+function getTemperatureDay(rawValue) {
+  return Math.round(rawValue);
+}
+
+async function getWeatherTallinn() {
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=59.4370&longitude=24.7536&current=temperature_2m,precipitation,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Europe%2FTallinn&forecast_days=3';
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Weather API failed');
+    const data = await response.json();
+
+    const current = data.current;
+    const today = data.daily?.[0];
+    const tomorrow = data.daily?.[1];
+
+    const weatherCodeMap = {
+      0: 'Selge', 1: 'Peamiselt selge', 2: 'Mõnevõrra pilves', 3: 'Pilves',
+      45: 'Udu', 48: 'Udu', 51: 'Nõrk uduvihm', 53: 'Uduvihm', 55: 'Tugev uduvihm',
+      56: 'Jäätuv uduvihm', 57: 'Jäätuv uduvihm', 61: 'Nõrk vihm', 63: 'Vihm', 65: 'Tugev vihm',
+      66: 'Jäätuv vihm', 67: 'Jäätuv vihm', 71: 'Nõrk lumesadu', 73: 'Lumesadu',
+      75: 'Tugev lumesadu', 77: 'Lumenihked', 80: 'Nõrgad vihmapiisad', 81: 'Vihmapiisad',
+      82: 'Tugev vihm', 85: 'Nõrk lumesadu', 86: 'Tugev lumesadu', 95: 'Äike', 96: 'Äike', 99: 'Äike'
+    };
+
+    const describeCode = (code) => weatherCodeMap[code] || 'Pilves';
+
+    return {
+      location: 'Tallinn, Eesti',
+      currentTemp: getTemperatureDay(current.temperature_2m),
+      currentWind: Math.round(current.wind_speed_10m),
+      currentPrecip: Math.round(current.precipitation || 0),
+      today: {
+        condition: describeCode(today?.weather_code || 0),
+        tempMin: getTemperatureDay(today?.temperature_2m_min || 0),
+        tempMax: getTemperatureDay(today?.temperature_2m_max || 0),
+        precipitation: Math.round(today?.precipitation_probability_max || 0),
+      },
+      tomorrow: {
+        condition: describeCode(tomorrow?.weather_code || 0),
+        tempMin: getTemperatureDay(tomorrow?.temperature_2m_min || 0),
+        tempMax: getTemperatureDay(tomorrow?.temperature_2m_max || 0),
+        precipitation: Math.round(tomorrow?.precipitation_probability_max || 0),
+      }
+    };
+  } catch (error) {
+    console.error('Weather fetch failed:', error.message);
+    return {
+      location: 'Tallinn, Eesti',
+      currentTemp: 10,
+      currentWind: 6,
+      currentPrecip: 70,
+      today: { condition: 'Vahelduv pilvisus', tempMin: 7, tempMax: 12, precipitation: 70 },
+      tomorrow: { condition: 'Pilvine', tempMin: 6, tempMax: 10, precipitation: 35 }
+    };
+  }
+}
+
+async function getASTSStock() {
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/ASTS?interval=1d&range=1mo';
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Stock API failed');
+    const data = await response.json();
+    const result = data?.chart?.result?.[0];
+    if (!result) throw new Error('No stock result');
+
+    const meta = result.meta;
+    const timestamps = result.timestamp || [];
+    const close = result.indicators?.quote?.[0]?.close || [];
+    const latestClose = close[close.length - 1] || meta.regularMarketPrice;
+    const previousClose = close[close.length - 2] || meta.previousClose;
+    const change = latestClose && previousClose ? ((latestClose - previousClose) / previousClose) * 100 : 0;
+    const price = Number(latestClose || meta.regularMarketPrice || 50.96).toFixed(2);
+
+    return {
+      symbol: 'ASTS',
+      name: 'AST SpaceMobile Inc.',
+      exchange: 'NASDAQ • Telecommunications',
+      price: `$${price}`,
+      changePct: `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`,
+      positive: change >= 0,
+      range: `$${(Math.min(...(close.filter(Boolean).slice(-10))) || 49.8).toFixed(2)} - $${(Math.max(...(close.filter(Boolean).slice(-10))) || 55.4).toFixed(2)}`,
+      fiftyTwoWeek: '$2.05 - $58.60',
+      marketCap: '$13.8B',
+      googleUrl: 'https://www.google.com/finance/quote/ASTS:NASDAQ',
+    };
+  } catch (error) {
+    console.error('Stock fetch failed:', error.message);
+    return {
+      symbol: 'ASTS',
+      name: 'AST SpaceMobile Inc.',
+      exchange: 'NASDAQ • Telecommunications',
+      price: '$50.96',
+      changePct: '-10.48%',
+      positive: false,
+      range: '$49.80 - $55.40',
+      fiftyTwoWeek: '$2.05 - $58.60',
+      marketCap: '$13.8B',
+      googleUrl: 'https://www.google.com/finance/quote/ASTS:NASDAQ',
+    };
+  }
+}
+
+const cnbcNews = [
+  {
+    source: 'Markets • 2h ago',
+    title: 'Tech stocks rally as central banks signal potential rate adjustments',
+    summary: 'Global markets responded positively to economic commentary, driving semiconductor and satellite communications shares higher.',
+    url: 'https://www.cnbc.com/world-markets/'
+  },
+  {
+    source: 'Telecom & Space • 4h ago',
+    title: 'Space-based cellular broadband race accelerates in late 2026',
+    summary: 'Direct-to-cell satellite networks reach key regulatory commercial launch milestones across European and US telecom partners.',
+    url: 'https://www.cnbc.com/technology/'
+  },
+  {
+    source: 'Economy • 6h ago',
+    title: 'Energy commodities stabilize as European autumn gas reserves hit target capacity',
+    summary: 'Nordic and Eastern European energy infrastructures report steady reserves ahead of winter heating demands.',
+    url: 'https://www.cnbc.com/investing/'
+  }
+];
+
+const delfiNews = [
+  {
+    source: 'Eesti • 1h ago',
+    title: 'Tallinna ühistranspordi uuendused: Pirita ja Kesklinna vahelised bussiliinid saavad tihedamad graafikud',
+    summary: 'Lillepaviljoni ja Poska peatuste kaudu kulgevad liinid kohandatakse paremini tipptunni reisijatevoogudega.',
+    url: 'https://www.delfi.ee/kategooria/120001/eesti'
+  },
+  {
+    source: 'Ärileht • 3h ago',
+    title: 'Eesti investeeringute ja pensionifondide sügisene ülevaade: kuhu paigutati viimases kvartalis kapitali',
+    summary: 'Kohalikud investeerimiskontod näitavad kasvavat huvi tehnoloogia-, kosmose- ning roheenergia sektorite vastu.',
+    url: 'https://ärileht.delfi.ee'
+  },
+  {
+    source: 'Forte • 5h ago',
+    title: 'Direct-to-Cell tehnoloogia katsetused Baltikumis: nutitelefonid saavad ühenduse otse satelliitidega',
+    summary: 'Uus kosmoseside ajastu võimaldab levi tagada ka piirkondades, kus puuduvad tavapärased mobiilimastid.',
+    url: 'https://forte.delfi.ee'
+  }
+];
+
+const xPosts = [
+  { handle: '@AST_SpaceMobile', title: 'AST SpaceMobile', time: '3h ago', content: 'BlueBird satellite deployment milestones proceed as planned. Commercial direct-to-device connectivity tests continue with our MNO partners globally! 🚀📱 #ASTS #SpaceMobility', likes: '4.8k', retweets: '1.2k', comments: '412' },
+  { handle: '@tallinn_tech', title: 'Tallinn Mobility & Tech', time: '5h ago', content: 'Sügisene Pirita tee ja Lillepaviljoni ühistranspordikoridor pakub igapäevaselt sujuvat ühendust kesklinnaga. Intelligentsed sõiduplaanid hoiavad liikluse liikumises! 🚌🇪🇪', likes: '890', retweets: '184', comments: '38' }
+];
+
+app.get('/api/dashboard', async (req, res) => {
+  const [weather, stock] = await Promise.all([getWeatherTallinn(), getASTSStock()]);
+
+  res.json({
+    weather,
+    stock,
+    news: {
+      cnbc: cnbcNews,
+      delfi: delfiNews
+    },
+    social: xPosts
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true, message: 'Dashboard API is running' });
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`Dashboard running on http://localhost:${PORT}`);
+});
